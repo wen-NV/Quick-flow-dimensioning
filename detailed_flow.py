@@ -71,8 +71,8 @@ def solve_detailed_flow(
                 velocity = flow / (math.pi * diameter**2 / 4)
                 reynolds = functions.reynolds_number(flow, diameter, rho, mu)
                 friction = functions.friction_factor(max(reynolds, 1e-12))
-                loss = friction * length / diameter * rho * velocity**2 / 2
-                #loss = functions.tube_loss (flow,rho, mu,  diameter, length)
+                #loss = friction * length / diameter * rho * velocity**2 / 2
+                loss = functions.tube_loss (flow,rho, mu,  diameter, length)
                 previous_tube_id = diameter
 
             elif kind == "Bend tube":
