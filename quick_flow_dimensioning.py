@@ -13,7 +13,17 @@ from detailed_flow import solve_detailed_flow
 #BASE_DIR = Path(__file__).resolve().parent
 #PROJECT_PATH = BASE_DIR / "Process_Parameters"
 
-import general_function as process_functions
+import os
+import urllib.request
+
+# Download raw function file from public GitHub repository if missing
+RAW_URL = "https://raw.githubusercontent.com/wen-NV/general_fluid_function/main/general_function.py"
+
+if not os.path.exists("general_function.py"):
+    urllib.request.urlretrieve(RAW_URL, "general_function.py")
+
+# Now import directly
+import general_function as  process_functions
 
 st.set_page_config(page_title="Detailed Fluid Path Calculator", layout="wide")
 st.title("🌊 Detailed Fluid Path Calculator")
