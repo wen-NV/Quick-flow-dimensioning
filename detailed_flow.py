@@ -70,7 +70,8 @@ def solve_detailed_flow(
                     raise ValueError("Straight tube ID must be positive and length cannot be negative.")
                 velocity = flow / (math.pi * diameter**2 / 4)
                 reynolds = functions.reynolds_number(flow, diameter, rho, mu)
-                loss = functions.tube_loss(flow, rho, mu, diameter, length)
+                friction = functions.friction_factor(max(reynolds, 1e-12))
+                loss = friction * length / diameter * rho * velocity**2 / 2
                 previous_tube_id = diameter
 
             elif kind == "Bend tube":
