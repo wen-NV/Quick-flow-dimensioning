@@ -20,16 +20,23 @@ detailed_flow = importlib.reload(detailed_flow)
 
 
 
-import os
+import importlib
 import urllib.request
 
-RAW_URL = "https://raw.githubusercontent.com/wen-NV/general_fluid_function/main/general_function.py"
+@st.cache_data(ttl=300)
+def sync_fluid_functions():
+    url = "https://raw.githubusercontent.com/wen-NV/general_fluid_function/main/general_function.py"
+    urllib.request.urlretrieve(url, "general_function.py")
 
-# Download and overwrite 'general_function.py' to ensure you always have the latest updates
-urllib.request.urlretrieve(RAW_URL, "general_function.py")
+# 1. Download file
+sync_fluid_functions()
 
-# Now import directly
-import general_function as  process_functions
+# 2. Tell Python to refresh its file scanner
+importlib.invalidate_caches()
+
+# 3. Import safely
+import general_function as process_functions
+
 
 st.set_page_config(page_title="Detailed Fluid Path Calculator", layout="wide")
 st.title("🌊 Detailed Fluid Path Calculator")
