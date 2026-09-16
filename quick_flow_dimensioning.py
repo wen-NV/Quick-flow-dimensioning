@@ -19,7 +19,7 @@ if str(PROCESS_PARAMETERS_ROOT) not in sys.path:
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_PATH = BASE_DIR / "Process_Parameters"
 
-import Functions.general_function as process_functions
+import general_function as process_functions
 
 st.set_page_config(page_title="Detailed Fluid Path Calculator", layout="wide")
 st.title("🌊 Detailed Fluid Path Calculator")
