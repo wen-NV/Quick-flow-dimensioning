@@ -8,12 +8,6 @@ from thermo import Mixture
 
 from detailed_flow import solve_detailed_flow
 
-PROCESS_PARAMETERS_ROOT = Path(__file__).resolve().parent.parent / "Process_Parameters"
-if not PROCESS_PARAMETERS_ROOT.is_dir():
-    raise FileNotFoundError(f"Process_Parameters project was not found at: {PROCESS_PARAMETERS_ROOT}")
-if str(PROCESS_PARAMETERS_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROCESS_PARAMETERS_ROOT))
-
 
 # ✅ Get the current directory dynamically
 BASE_DIR = Path(__file__).resolve().parent
