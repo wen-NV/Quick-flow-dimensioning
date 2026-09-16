@@ -68,10 +68,11 @@ def solve_detailed_flow(
                 length = float(component["length_m"])
                 if diameter <= 0 or length < 0:
                     raise ValueError("Straight tube ID must be positive and length cannot be negative.")
-                velocity = flow / (math.pi * diameter**2 / 4)
-                reynolds = functions.reynolds_number(flow, diameter, rho, mu)
-                friction = functions.friction_factor(max(reynolds, 1e-12))
-                loss = friction * length / diameter * rho * velocity**2 / 2
+                #velocity = flow / (math.pi * diameter**2 / 4)
+                #reynolds = functions.reynolds_number(flow, diameter, rho, mu)
+                #friction = functions.friction_factor(max(reynolds, 1e-12))
+                #loss = friction * length / diameter * rho * velocity**2 / 2
+                loss = functions.tube_loss (flow, diameter, length, rho, mu)
                 previous_tube_id = diameter
 
             elif kind == "Bend tube":
@@ -86,7 +87,7 @@ def solve_detailed_flow(
                 arc_length = radius * math.radians(angle)
                 friction = functions.friction_factor(max(reynolds, 1e-12))
                 loss = count * (
-                    friction * arc_length / diameter + bend_zeta(reynolds, ratio, angle)
+                    friction * arc_length / diameter + bend_zeta(reynolds, ratio, angle) # need to be check for how many bends, the ratio will change, according to VDI Heat Atlas
                 ) * rho * velocity**2 / 2
                 previous_tube_id = diameter
 
@@ -103,13 +104,37 @@ def solve_detailed_flow(
                     raise ValueError(f"{kind} inlet ID, outlet ID, and length must be valid.")
                 if inlet_id > previous_tube_id or outlet_id > next_tube_id:
                     raise ValueError(f"{kind} inlet ID must fit its preceding tube and outlet ID must fit its following tube.")
-                mean_id = (inlet_id + outlet_id) / 2
-                velocity = flow / (math.pi * mean_id**2 / 4)
-                reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
-                zeta = functions.get_zeta_in(inlet_id, previous_tube_id, Re=max(reynolds, 1))
-                zeta += functions.OutletDrag_coefficient(outlet_id, next_tube_id)
-                zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
-                loss = count * zeta * rho * velocity**2 / 2
+                #mean_id = (inlet_id + outlet_id) / 2
+                #velocity = flow / (math.pi * mean_id**2 / 4)
+                #reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
+                #zeta = functions.get_zeta_in(inlet_id, previous_tube_id, Re=max(reynolds, 1))
+                #zeta += functions.OutletDrag_coefficient(outlet_id, next_tube_id)
+                #zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
+                #loss = count * zeta * rho * velocity**2 / 2
+                loss = functions.barb_dp (flow,mu, rho, inlet_id,outlet_id, previous_tube_id, next_tube_id, length)
+
+
+            elif kind in {"LBarb"}:
+                            if previous_tube_id is None:
+                                raise ValueError(f"Add a straight or bend tube before the {kind.lower()} row.")
+                            next_tube_id = next_tube_ids[index - 1]
+                            if next_tube_id is None:
+                                raise ValueError(f"Add a straight or bend tube after the {kind.lower()} row.")
+                            inlet_id = float(component["inlet_id_m"])
+                            outlet_id = float(component["outlet_id_m"])
+                            length = float(component.get("restrictor_length_m", 0))
+                            if inlet_id <= 0 or outlet_id <= 0 or length < 0:
+                                raise ValueError(f"{kind} inlet ID, outlet ID, and length must be valid.")
+                            if inlet_id > previous_tube_id or outlet_id > next_tube_id:
+                                raise ValueError(f"{kind} inlet ID must fit its preceding tube and outlet ID must fit its following tube.")
+                            #mean_id = (inlet_id + outlet_id) / 2
+                            #velocity = flow / (math.pi * mean_id**2 / 4)
+                            #reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
+                            #zeta = functions.get_zeta_in(inlet_id, previous_tube_id, Re=max(reynolds, 1))
+                            #zeta += functions.OutletDrag_coefficient(outlet_id, next_tube_id)
+                            #zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
+                            #loss = count * zeta * rho * velocity**2 / 2
+                            loss = functions.Lbarb_dp (flow,mu, rho, inlet_id,outlet_id, previous_tube_id, next_tube_id, length)    
 
             elif kind in {"Valve Cv", "Valve Kv"}:
                 coefficient = float(component["valve_coefficient"])

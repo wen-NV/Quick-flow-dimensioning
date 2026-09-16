@@ -37,7 +37,7 @@ st.write("Solve flow rate from tube friction and a selectable restriction on eac
 st.header("1. Fluid and pressure")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    p_inlet_bar = st.number_input("Inlet pressure (bar)", min_value=0.0, value=5.0, step=0.1)
+    p_inlet_bar = st.number_input("Inlet pressure (bar)", min_value=0.0, value=1.8, step=0.1)
 with c2:
     p_outlet_bar = st.number_input("Outlet pressure (bar)", min_value=0.0, value=1.0, step=0.1)
 with c3:
@@ -80,7 +80,7 @@ path = st.data_editor(
     default_path, num_rows="dynamic", width="stretch",
     column_config={
         "Name": st.column_config.TextColumn(required=True),
-        "Type": st.column_config.SelectboxColumn(options=["Straight tube", "Bend tube", "Barb", "Orifice", "Valve Cv", "Valve Kv"], required=True),
+        "Type": st.column_config.SelectboxColumn(options=["Straight tube", "Bend tube", "Barb", "Orifice", "LBarb","Valve Cv", "Valve Kv"], required=True),
         "Tube ID (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
         "Tube Length (mm)": st.column_config.NumberColumn(min_value=0.0, format="%.3f"),
         "Restrictor Inlet ID (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
@@ -92,7 +92,7 @@ path = st.data_editor(
         "Bend Angle (°)": st.column_config.NumberColumn(min_value=1.0, max_value=360.0, format="%.1f"),
     },
 )
-st.caption("Rows are evaluated top to bottom. All lengths are entered in mm. A bend is a tube component with its own ID, radius, and angle. Barb/orifice rows must sit between two tube rows; their inlet and outlet IDs are checked against their adjacent tubes.")
+st.caption("Rows are evaluated top to bottom. All lengths are entered in mm. A bend is a tube component with its own ID, radius, and now angle is only for 90 degree. Barb/orifice rows must sit between two tube rows; their inlet and outlet IDs are checked against their adjacent tubes.")
 
 pressure_drop_pa = (p_inlet_bar - p_outlet_bar) * 100_000
 calculate_clicked = st.button("Calculate flow", type="primary")
