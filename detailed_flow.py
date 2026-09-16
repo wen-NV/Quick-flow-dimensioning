@@ -1,4 +1,4 @@
-"""Detailed fluid-path solver using Process_Parameters hydraulic helpers."""
+"""Ordered fluid-path solver using Process_Parameters hydraulic helpers."""
 
 from __future__ import annotations
 
@@ -10,79 +10,121 @@ from thermo import Chemical
 
 def solve_detailed_flow(
     *, pressure_inlet_pa: float, pressure_outlet_pa: float, temperature_k: float,
-    fluid: str | Chemical, tube_sections: list[dict[str, Any]], functions: Any,
+    fluid: str | Chemical, path_components: list[dict[str, Any]], functions: Any,
 ) -> dict[str, Any]:
-    """Solve one path made of tube rows and optional per-row restrictions.
+    """Solve an ordered path of straight tubes and separate restrictions.
 
-    Each section needs ``id_m`` and ``length_m``.  Its optional ``restriction``
-    is one of: None, Bend, Barb, Orifice, Valve Cv, or Valve Kv.
+    A restriction (barb or orifice) sits between tube components. Its own ID
+    is checked against both the preceding and following tube IDs.
     """
     pressure_drop_pa = pressure_inlet_pa - pressure_outlet_pa
     if pressure_drop_pa <= 0:
         raise ValueError("Inlet pressure must be greater than outlet pressure.")
-    if not tube_sections:
-        raise ValueError("Add at least one tube section.")
-    if any(s["id_m"] <= 0 or s["length_m"] < 0 for s in tube_sections):
-        raise ValueError("Tube IDs must be positive and lengths cannot be negative.")
+    if not path_components:
+        raise ValueError("Add at least one path component.")
 
     chemical = Chemical(fluid, T=temperature_k, P=(pressure_inlet_pa + pressure_outlet_pa) / 2) if isinstance(fluid, str) else fluid
     rho, mu = chemical.rho, chemical.mu
     if not rho or not mu:
         raise ValueError(f"Thermo could not determine density or viscosity for {fluid!r}.")
 
-    def local_loss(section: dict[str, Any], flow: float, velocity: float, reynolds: float) -> float:
-        kind = section.get("restriction", "None")
-        count = max(int(section.get("restriction_count", 1)), 1)
-        diameter = section["id_m"]
-        dynamic_pressure = rho * velocity**2 / 2
-
-        if kind == "None":
-            return 0.0
-        if kind == "Bend":
-            ratio = float(section.get("bend_radius_ratio", 11.71))
-            return count * functions.get_zeta_bend(max(reynolds, 10), ratio) * dynamic_pressure
-        if kind in {"Barb", "Orifice"}:
-            restriction_id = float(section.get("restriction_id_m", 0))
-            if restriction_id <= 0 or restriction_id > diameter:
-                raise ValueError(f"{kind} ID must be greater than zero and no larger than its tube ID.")
-            restriction_velocity = flow / (math.pi * restriction_id**2 / 4)
-            restriction_re = functions.reynolds_number(flow, restriction_id, rho, mu)
-            zeta = functions.get_zeta_in(restriction_id, diameter, Re=max(restriction_re, 1))
-            zeta += functions.OutletDrag_coefficient(restriction_id, diameter)
-            if kind == "Barb":
-                restriction_length = float(section.get("restriction_length_m", 0))
-                zeta += functions.friction_factor(max(restriction_re, 1e-12)) * restriction_length / restriction_id
-            return count * zeta * rho * restriction_velocity**2 / 2
-        if kind in {"Valve Cv", "Valve Kv"}:
-            coefficient = float(section.get("valve_coefficient", 0))
-            if coefficient <= 0:
-                raise ValueError("Valve Cv/Kv must be greater than zero.")
-            specific_gravity = rho / 997.0
-            if kind == "Valve Cv":
-                flow_gpm = flow * 15_850.323
-                return count * specific_gravity * (flow_gpm / coefficient) ** 2 * 6_894.757
-            flow_m3_h = flow * 3600
-            return count * specific_gravity * (flow_m3_h / coefficient) ** 2 * 100_000
-        raise ValueError(f"Unknown restriction type: {kind}")
+    def bend_zeta(reynolds: float, radius_ratio: float, angle_deg: float) -> float:
+        """Interpolate available 90° bend data, then scale for bend angle."""
+        if radius_ratio <= 0 or angle_deg <= 0:
+            raise ValueError("Bend radius and angle must be positive.")
+        ratios = [2.26, 3.04, 6.53, 11.71]
+        zetas = [functions.get_zeta_bend(max(reynolds, 10), ratio) for ratio in ratios]
+        if radius_ratio <= ratios[0]:
+            zeta_90 = zetas[0]
+        elif radius_ratio >= ratios[-1]:
+            zeta_90 = zetas[-1]
+        else:
+            for lower, upper, zeta_lower, zeta_upper in zip(ratios, ratios[1:], zetas, zetas[1:]):
+                if lower <= radius_ratio <= upper:
+                    fraction = (radius_ratio - lower) / (upper - lower)
+                    zeta_90 = zeta_lower + fraction * (zeta_upper - zeta_lower)
+                    break
+        return zeta_90 * angle_deg / 90
 
     def losses(flow: float) -> tuple[float, list[dict[str, float]]]:
-        rows: list[dict[str, float]] = []
         total = 0.0
-        for index, section in enumerate(tube_sections, 1):
-            diameter = section["id_m"]
-            velocity = flow / (math.pi * diameter**2 / 4)
-            reynolds = functions.reynolds_number(flow, diameter, rho, mu)
-            friction = functions.friction_factor(max(reynolds, 1e-12))
-            tube_loss = friction * section["length_m"] / diameter * rho * velocity**2 / 2
-            restriction_loss = local_loss(section, flow, velocity, reynolds)
-            total += tube_loss + restriction_loss
-            name = section.get("name") or f"Tube {index}"
-            kind = section.get("restriction", "None")
-            rows.append({
-                "Component": name, "Restriction": kind, "Tube ΔP (Pa)": tube_loss,
-                "Restriction ΔP (Pa)": restriction_loss, "Total ΔP (Pa)": tube_loss + restriction_loss,
-                "Re": reynolds,
-            })
+        rows: list[dict[str, float]] = []
+        previous_tube_id: float | None = None
+        next_tube_ids: list[float | None] = [None] * len(path_components)
+        next_id: float | None = None
+        for index in range(len(path_components) - 1, -1, -1):
+            next_tube_ids[index] = next_id
+            if path_components[index]["type"] in {"Straight tube", "Bend tube"}:
+                next_id = float(path_components[index]["id_m"])
+
+        for index, component in enumerate(path_components, 1):
+            kind = component["type"]
+            name = component.get("name") or f"{kind} {index}"
+            count = max(int(component.get("count", 1)), 1)
+            loss, reynolds = 0.0, 0.0
+
+            if kind == "Straight tube":
+                diameter = float(component["id_m"])
+                length = float(component["length_m"])
+                if diameter <= 0 or length < 0:
+                    raise ValueError("Straight tube ID must be positive and length cannot be negative.")
+                velocity = flow / (math.pi * diameter**2 / 4)
+                reynolds = functions.reynolds_number(flow, diameter, rho, mu)
+                friction = functions.friction_factor(max(reynolds, 1e-12))
+                loss = friction * length / diameter * rho * velocity**2 / 2
+                previous_tube_id = diameter
+
+            elif kind == "Bend tube":
+                diameter = float(component["id_m"])
+                if diameter <= 0:
+                    raise ValueError("Bend ID must be positive.")
+                velocity = flow / (math.pi * diameter**2 / 4)
+                reynolds = functions.reynolds_number(flow, diameter, rho, mu)
+                radius = float(component.get("bend_radius_m", 0))
+                angle = float(component.get("bend_angle_deg", 90))
+                ratio = radius / diameter
+                arc_length = radius * math.radians(angle)
+                friction = functions.friction_factor(max(reynolds, 1e-12))
+                loss = count * (
+                    friction * arc_length / diameter + bend_zeta(reynolds, ratio, angle)
+                ) * rho * velocity**2 / 2
+                previous_tube_id = diameter
+
+            elif kind in {"Barb", "Orifice"}:
+                if previous_tube_id is None:
+                    raise ValueError(f"Add a straight or bend tube before the {kind.lower()} row.")
+                next_tube_id = next_tube_ids[index - 1]
+                if next_tube_id is None:
+                    raise ValueError(f"Add a straight or bend tube after the {kind.lower()} row.")
+                inlet_id = float(component["inlet_id_m"])
+                outlet_id = float(component["outlet_id_m"])
+                length = float(component.get("restrictor_length_m", 0))
+                if inlet_id <= 0 or outlet_id <= 0 or length < 0:
+                    raise ValueError(f"{kind} inlet ID, outlet ID, and length must be valid.")
+                if inlet_id > previous_tube_id or outlet_id > next_tube_id:
+                    raise ValueError(f"{kind} inlet ID must fit its preceding tube and outlet ID must fit its following tube.")
+                mean_id = (inlet_id + outlet_id) / 2
+                velocity = flow / (math.pi * mean_id**2 / 4)
+                reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
+                zeta = functions.get_zeta_in(inlet_id, previous_tube_id, Re=max(reynolds, 1))
+                zeta += functions.OutletDrag_coefficient(outlet_id, next_tube_id)
+                zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
+                loss = count * zeta * rho * velocity**2 / 2
+
+            elif kind in {"Valve Cv", "Valve Kv"}:
+                coefficient = float(component["valve_coefficient"])
+                if coefficient <= 0:
+                    raise ValueError("Valve Cv/Kv must be greater than zero.")
+                specific_gravity = rho / 997.0
+                if kind == "Valve Cv":
+                    loss = count * specific_gravity * (flow * 15_850.323 / coefficient) ** 2 * 6_894.757
+                else:
+                    loss = count * specific_gravity * (flow * 3600 / coefficient) ** 2 * 100_000
+            else:
+                raise ValueError(f"Unknown component type: {kind}")
+
+            total += loss
+            rows.append({"Component": name, "Type": kind, "ΔP (Pa)": loss, "Re": reynolds})
         return total, rows
 
     lower, upper = 0.0, 0.01
@@ -97,10 +139,6 @@ def solve_detailed_flow(
     flow = (lower + upper) / 2
     total, breakdown = losses(flow)
     return {
-        "flow_m3_s": flow,
-        "flow_l_min": flow * 60_000,
-        "total_loss_pa": total,
-        "density_kg_m3": rho,
-        "viscosity_pa_s": mu,
-        "breakdown": breakdown,
+        "flow_m3_s": flow, "flow_l_min": flow * 60_000, "total_loss_pa": total,
+        "density_kg_m3": rho, "viscosity_pa_s": mu, "breakdown": breakdown,
     }
