@@ -14,6 +14,11 @@ if not PROCESS_PARAMETERS_ROOT.is_dir():
 if str(PROCESS_PARAMETERS_ROOT) not in sys.path:
     sys.path.insert(0, str(PROCESS_PARAMETERS_ROOT))
 
+
+# ✅ Get the current directory dynamically
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_PATH = BASE_DIR / "Process_Parameters"
+
 import Functions.general_function as process_functions
 
 st.set_page_config(page_title="Detailed Fluid Path Calculator", layout="wide")
