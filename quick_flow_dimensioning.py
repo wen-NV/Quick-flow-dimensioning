@@ -1,4 +1,5 @@
 import sys
+import importlib
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -6,7 +7,11 @@ import pandas as pd
 import streamlit as st
 from thermo import Mixture
 
-from detailed_flow import solve_detailed_flow
+import detailed_flow
+
+# Streamlit retains imported modules between reruns; reload this local solver
+# so edits to detailed_flow.py are applied without restarting the app.
+detailed_flow = importlib.reload(detailed_flow)
 
 
 # ✅ Get the current directory dynamically
@@ -108,7 +113,7 @@ elif calculate_clicked:
             }
             for _, row in path.iterrows()
         ]
-        result = solve_detailed_flow(
+        result = detailed_flow.solve_detailed_flow(
             pressure_inlet_pa=p_inlet_bar * 100_000,
             pressure_outlet_pa=p_outlet_bar * 100_000,
             temperature_k=temperature_c + 273.15,
