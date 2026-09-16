@@ -71,7 +71,7 @@ st.header("2. Ordered flow path")
 default_path = pd.DataFrame([
     {"Name": "Feed tube from vessel", "Type": "Straight tube", "Tube ID (mm)": 4, "Tube Length (mm)": 25.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
     {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": 0.0, "Tube Length (mm)": 0.0, "Restrictor Inlet ID (mm)": 2.40, "Restrictor Outlet ID (mm)": 2.40, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-    {"Name": "inter tube", "Type": "bend tube", "Tube ID (mm)": 3.175, "Tube Length (mm)": 40.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
+    {"Name": "inter tube", "Type": "Bend tube", "Tube ID (mm)": 3.175, "Tube Length (mm)": 40.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
     {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": 0.0, "Tube Length (mm)": 0.0, "Restrictor Inlet ID (mm)": 2.40, "Restrictor Outlet ID (mm)": 2.40, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
     {"Name": "Outlet tube to vessel", "Type": "Straight tube", "Tube ID (mm)": 4.00, "Tube Length (mm)": 25.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 10.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
 
