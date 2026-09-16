@@ -10,8 +10,8 @@ from detailed_flow import solve_detailed_flow
 
 
 # ✅ Get the current directory dynamically
-BASE_DIR = Path(__file__).resolve().parent
-PROJECT_PATH = BASE_DIR / "Process_Parameters"
+#BASE_DIR = Path(__file__).resolve().parent
+#PROJECT_PATH = BASE_DIR / "Process_Parameters"
 
 import general_function as process_functions
 

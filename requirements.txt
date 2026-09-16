@@ -2,5 +2,7 @@ streamlit
 pandas
 numpy
 matplotlib
-chemicals==1.2.0
-thermo==0.3.9
+scipy
+fluids>=1.0.0
+chemicals>=1.2.0
+thermo>=0.6.0
