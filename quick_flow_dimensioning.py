@@ -76,51 +76,132 @@ else:
 st.caption("Density and viscosity come from thermo at the selected temperature and mean pressure.")
 
 st.header("2. Ordered flow path")
+component_types = ["Straight tube", "Bend tube", "Barb", "Orifice", "LBarb", "Valve Cv", "Valve Kv"]
 default_path = pd.DataFrame([
-    {"Name": "Feed tube from vessel", "Type": "Straight tube", "Tube ID (mm)": 4, "Tube Length (mm)": 25.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-    {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": 0.0, "Tube Length (mm)": 0.0, "Restrictor Inlet ID (mm)": 2.40, "Restrictor Outlet ID (mm)": 2.40, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-    {"Name": "inter tube", "Type": "Bend tube", "Tube ID (mm)": 3.175, "Tube Length (mm)": 40.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-    {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": 0.0, "Tube Length (mm)": 0.0, "Restrictor Inlet ID (mm)": 2.40, "Restrictor Outlet ID (mm)": 2.40, "Restrictor Length (mm)": 34.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-    {"Name": "Outlet tube to vessel", "Type": "Straight tube", "Tube ID (mm)": 4.00, "Tube Length (mm)": 25.0, "Restrictor Inlet ID (mm)": 2.4, "Restrictor Outlet ID (mm)": 2.4, "Restrictor Length (mm)": 10.0, "Count": 1, "Valve Cv/Kv": 1.0, "Bend Radius (mm)": 50.0, "Bend Angle (°)": 90.0},
-
+    {"Name": "Feed tube", "Type": "Straight tube", "Tube ID (mm)": "4.0", "Tube length (mm)": "25.0", "Restrictor inlet ID (mm)": "—", "Restrictor outlet ID (mm)": "—", "Restrictor length (mm)": "—", "Valve Cv/Kv": "—", "Bend radius (mm)": "—", "Move": ""},
+    {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": "—", "Tube length (mm)": "—", "Restrictor inlet ID (mm)": "2.4", "Restrictor outlet ID (mm)": "2.4", "Restrictor length (mm)": "34.0", "Valve Cv/Kv": "—", "Bend radius (mm)": "—", "Move": ""},
+    {"Name": "Bend", "Type": "Bend tube", "Tube ID (mm)": "3.175", "Tube length (mm)": "40.0", "Restrictor inlet ID (mm)": "—", "Restrictor outlet ID (mm)": "—", "Restrictor length (mm)": "—", "Valve Cv/Kv": "—", "Bend radius (mm)": "50.0", "Move": ""},
+    {"Name": "Outlet tube", "Type": "Straight tube", "Tube ID (mm)": "4.0", "Tube length (mm)": "25.0", "Restrictor inlet ID (mm)": "—", "Restrictor outlet ID (mm)": "—", "Restrictor length (mm)": "—", "Valve Cv/Kv": "—", "Bend radius (mm)": "—", "Move": ""},
 ])
+if "path_table" not in st.session_state:
+    st.session_state.path_table = default_path
+elif "Move" not in st.session_state.path_table.columns:
+    st.session_state.path_table = st.session_state.path_table.copy()
+    st.session_state.path_table["Move"] = ""
+if "path_editor_revision" not in st.session_state:
+    st.session_state.path_editor_revision = 0
+
+type_fields = {
+    "Straight tube": {"Tube ID (mm)", "Tube length (mm)"},
+    "Bend tube": {"Tube ID (mm)", "Tube length (mm)", "Bend radius (mm)"},
+    "Barb": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
+    "Orifice": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
+    "LBarb": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
+    "Valve Cv": {"Valve Cv/Kv"},
+    "Valve Kv": {"Valve Cv/Kv"},
+}
+input_columns = set().union(*type_fields.values())
+
+def normalize_path(table):
+    """Set non-applicable cells to — and clear newly applicable cells."""
+    normalized = table.copy()
+    for index, row in normalized.iterrows():
+        kind = row["Type"] if row["Type"] in type_fields else "Straight tube"
+        normalized.at[index, "Type"] = kind
+        for column in input_columns:
+            if column not in type_fields[kind]:
+                normalized.at[index, column] = "—"
+            elif str(normalized.at[index, column]).strip() in {"—", "-", "None", "nan"}:
+                normalized.at[index, column] = ""
+    return normalized
+
+def sync_path_table(editor_key):
+    """Save table edits and set non-applicable component fields to —."""
+    changes = st.session_state[editor_key]
+    updated = st.session_state.path_table.copy()
+    for row_index, values in changes.get("edited_rows", {}).items():
+        for column, value in values.items():
+            updated.at[row_index, column] = value
+    for row_index, values in changes.get("edited_rows", {}).items():
+        direction = values.get("Move")
+        target_index = row_index - 1 if direction == "↑" else row_index + 1 if direction == "↓" else row_index
+        if direction in {"↑", "↓"} and 0 <= target_index < len(updated):
+            order = list(range(len(updated)))
+            order[row_index], order[target_index] = order[target_index], order[row_index]
+            updated = updated.iloc[order].reset_index(drop=True)
+    for row_index in sorted(changes.get("deleted_rows", []), reverse=True):
+        updated = updated.drop(updated.index[row_index])
+    added_rows = changes.get("added_rows", [])
+    if added_rows:
+        updated = pd.concat([updated, pd.DataFrame(added_rows)], ignore_index=True)
+    if "Move" not in updated.columns:
+        updated["Move"] = ""
+    updated["Move"] = ""
+    st.session_state.path_table = normalize_path(updated).reset_index(drop=True)
+    st.session_state.path_editor_revision += 1
+
+editor_key = f"path_editor_{st.session_state.path_editor_revision}"
 path = st.data_editor(
-    default_path, num_rows="dynamic", width="stretch",
+    st.session_state.path_table,
+    num_rows="dynamic",
+    width="stretch",
+    key=editor_key,
+    on_change=sync_path_table,
+    args=(editor_key,),
     column_config={
-        "Name": st.column_config.TextColumn(required=True),
-        "Type": st.column_config.SelectboxColumn(options=["Straight tube", "Bend tube", "Barb", "Orifice", "LBarb","Valve Cv", "Valve Kv"], required=True),
-        "Tube ID (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-        "Tube Length (mm)": st.column_config.NumberColumn(min_value=0.0, format="%.3f"),
-        "Restrictor Inlet ID (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-        "Restrictor Outlet ID (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-        "Restrictor Length (mm)": st.column_config.NumberColumn(min_value=0.0, format="%.3f"),
-        "Count": st.column_config.NumberColumn(min_value=1, step=1),
-        "Valve Cv/Kv": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-        "Bend Radius (mm)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-        "Bend Angle (°)": st.column_config.NumberColumn(min_value=1.0, max_value=360.0, format="%.1f"),
+        "Name": st.column_config.TextColumn(),
+        "Type": st.column_config.SelectboxColumn(options=component_types, required=True),
+        "Tube ID (mm)": st.column_config.TextColumn(),
+        "Tube length (mm)": st.column_config.TextColumn(),
+        "Restrictor inlet ID (mm)": st.column_config.TextColumn(),
+        "Restrictor outlet ID (mm)": st.column_config.TextColumn(),
+        "Restrictor length (mm)": st.column_config.TextColumn(),
+        "Valve Cv/Kv": st.column_config.TextColumn(),
+        "Bend radius (mm)": st.column_config.TextColumn(),
+        "Move": st.column_config.SelectboxColumn(options=["", "↑", "↓"], width="small"),
     },
 )
-st.caption("Rows are evaluated top to bottom. All lengths are entered in mm. A bend is a tube component with its own ID, radius, and now angle is only for 90 degree. Barb/orifice rows must sit between two tube rows; their inlet and outlet IDs are checked against their adjacent tubes.")
+st.caption("Use Move ↑ or ↓ to reorder a row. Fields not used by the selected component type reset to —.")
+
+
+validation_errors = []
+
+def required_number(row, column):
+    value = str(row[column]).strip()
+    if value in {"", "-", "—"}:
+        validation_errors.append(f"{row['Name']}: enter a value for {column}.")
+        return 0.0
+    try:
+        return float(value)
+    except ValueError:
+        validation_errors.append(f"{row['Name']}: {column} must be a number.")
+        return 0.0
+
+components = []
+for _, row in path.iterrows():
+    kind = row["Type"]
+    component = {"name": row["Name"], "type": kind, "count": 1, "bend_angle_deg": 90.0}
+    if kind in {"Straight tube", "Bend tube"}:
+        component["id_m"] = required_number(row, "Tube ID (mm)") / 1000
+        component["length_m"] = required_number(row, "Tube length (mm)") / 1000
+        if kind == "Bend tube":
+            component["bend_radius_m"] = required_number(row, "Bend radius (mm)") / 1000
+    elif kind in {"Barb", "Orifice", "LBarb"}:
+        component["inlet_id_m"] = required_number(row, "Restrictor inlet ID (mm)") / 1000
+        component["outlet_id_m"] = required_number(row, "Restrictor outlet ID (mm)") / 1000
+        component["restrictor_length_m"] = required_number(row, "Restrictor length (mm)") / 1000
+    else:
+        component["valve_coefficient"] = required_number(row, "Valve Cv/Kv")
+    components.append(component)
 
 pressure_drop_pa = (p_inlet_bar - p_outlet_bar) * 100_000
 calculate_clicked = st.button("Calculate flow", type="primary")
 if calculate_clicked and pressure_drop_pa <= 0:
     st.warning("Outlet pressure must be lower than inlet pressure.")
+elif calculate_clicked and validation_errors:
+    st.error(" ".join(validation_errors))
 elif calculate_clicked:
     try:
-        components = [
-            {
-                "name": row["Name"], "type": row["Type"], "id_m": row["Tube ID (mm)"] / 1000,
-                "inlet_id_m": row["Restrictor Inlet ID (mm)"] / 1000,
-                "outlet_id_m": row["Restrictor Outlet ID (mm)"] / 1000,
-                "length_m": row["Tube Length (mm)"] / 1000,
-                "restrictor_length_m": row["Restrictor Length (mm)"] / 1000, "count": row["Count"],
-                "valve_coefficient": row["Valve Cv/Kv"],
-                "bend_radius_m": row["Bend Radius (mm)"] / 1000,
-                "bend_angle_deg": row["Bend Angle (°)"],
-            }
-            for _, row in path.iterrows()
-        ]
         result = detailed_flow.solve_detailed_flow(
             pressure_inlet_pa=p_inlet_bar * 100_000,
             pressure_outlet_pa=p_outlet_bar * 100_000,
