@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # Detailed Fluid Path Calculator
 
 A Streamlit app for estimating liquid flow through an ordered fluid path. It balances the available pressure drop against tube friction and local losses from bends, barbs, L-barbs, orifices, and valves.
@@ -85,8 +85,9 @@ The solver uses Darcy–Weisbach tube losses and the hydraulic helper functions 
 - The bend-loss data is based on the available 90° bend correlations; bend tubes use a fixed 90° angle in the current UI.
 - Valve Cv/Kv calculations use liquid-flow conventions and fluid specific gravity relative to water.
 =======
-streamlit app for quick flow calculation
 
+
+streamlit app for quick flow calculation
 enter web address
 https://quick-flow-dimensioning-nvision-quantum-using.streamlit.app/
->>>>>>> c44d930f0d64e0fe2a60fd8cf80976652b0424a3
+
