@@ -84,10 +84,7 @@ The solver uses Darcy–Weisbach tube losses and the hydraulic helper functions 
 - Confirm the geometry, units, material properties, and component coefficients independently before using results for design decisions.
 - The bend-loss data is based on the available 90° bend correlations; bend tubes use a fixed 90° angle in the current UI.
 - Valve Cv/Kv calculations use liquid-flow conventions and fluid specific gravity relative to water.
-=======
 
-
-streamlit app for quick flow calculation
-enter web address
-https://quick-flow-dimensioning-nvision-quantum-using.streamlit.app/
+- streamlit web for quick flow calculation.
+- https://quick-flow-dimensioning-nvision-quantum-using.streamlit.app/
 
