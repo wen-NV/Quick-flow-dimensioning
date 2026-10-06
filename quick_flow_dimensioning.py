@@ -42,6 +42,23 @@ st.set_page_config(page_title="Detailed Fluid Path Calculator", layout="wide")
 st.title("🌊 Detailed Fluid Path Calculator")
 st.write("Solve flow rate from tube friction and a selectable restriction on each tube section.")
 
+with st.expander("How to use this app", expanded=False):
+    st.markdown(
+        """
+1. Set inlet/outlet pressure, temperature, and either a pure liquid or a two-liquid mixture with mole fractions (can be changed to mass fraction or volume fraction).
+2. Build the flow path in the table from top to bottom. One row is one component.
+3. Select the component type first, then fill only the fields that are not marked `—`.
+4. The Name field is optional. You can also name each component for later tracking, or it will be named automatically with type and number.
+5. Use **Move** `↑` or `↓` to change the component order. 
+6. Use the **+** button to add a new row at the bottom, or click the whole role and click "trash bin" at the top right of the table to delete a row.
+7. Click **Calculate flow** to see total flow, fluid properties, and pressure loss by component.
+
+**Path rule:** Barb, LBarb, Orifice, Compression fitting, and valves normally sit between tube rows. They can be the final row when they discharge directly to the outlet.
+
+All path-table dimensions are in **mm**. This model is for liquids and gas in low pressure differences, not compressible gas flow for now.
+        """
+    )
+
 st.header("1. Fluid and pressure")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -73,10 +90,13 @@ else:
         T=temperature_c + 273.15,
         P=((p_inlet_bar + p_outlet_bar) / 2) * 100_000,
     )
-st.caption("Density and viscosity come from thermo at the selected temperature and mean pressure.")
+st.caption("Density and viscosity come from thermo at the selected temperature and mean pressure of inlet and outlet.")
 
 st.header("2. Ordered flow path")
-component_types = ["Straight tube", "Bend tube", "Barb", "Orifice", "LBarb", "Valve Cv", "Valve Kv"]
+component_types = [
+    "Straight tube", "Bend tube", "Barb", "LBarb", "Orifice",
+    "Compression fitting", "Valve Cv", "Valve Kv",
+]
 default_path = pd.DataFrame([
     {"Name": "Feed tube", "Type": "Straight tube", "Tube ID (mm)": "4.0", "Tube length (mm)": "25.0", "Restrictor inlet ID (mm)": "—", "Restrictor outlet ID (mm)": "—", "Restrictor length (mm)": "—", "Valve Cv/Kv": "—", "Bend radius (mm)": "—", "Move": ""},
     {"Name": "Barb", "Type": "Barb", "Tube ID (mm)": "—", "Tube length (mm)": "—", "Restrictor inlet ID (mm)": "2.4", "Restrictor outlet ID (mm)": "2.4", "Restrictor length (mm)": "34.0", "Valve Cv/Kv": "—", "Bend radius (mm)": "—", "Move": ""},
@@ -97,6 +117,7 @@ type_fields = {
     "Barb": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
     "Orifice": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
     "LBarb": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
+    "Compression fitting": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
     "Valve Cv": {"Valve Cv/Kv"},
     "Valve Kv": {"Valve Cv/Kv"},
 }
@@ -186,7 +207,7 @@ for _, row in path.iterrows():
         component["length_m"] = required_number(row, "Tube length (mm)") / 1000
         if kind == "Bend tube":
             component["bend_radius_m"] = required_number(row, "Bend radius (mm)") / 1000
-    elif kind in {"Barb", "Orifice", "LBarb"}:
+    elif kind in {"Barb", "Orifice", "LBarb", "Compression fitting"}:
         component["inlet_id_m"] = required_number(row, "Restrictor inlet ID (mm)") / 1000
         component["outlet_id_m"] = required_number(row, "Restrictor outlet ID (mm)") / 1000
         component["restrictor_length_m"] = required_number(row, "Restrictor length (mm)") / 1000
@@ -194,12 +215,35 @@ for _, row in path.iterrows():
         component["valve_coefficient"] = required_number(row, "Valve Cv/Kv")
     components.append(component)
 
+restrictor_types = {
+    "Barb", "LBarb", "Orifice", "Compression fitting", "Valve Cv", "Valve Kv"
+}
+tube_types = {"Straight tube", "Bend tube"}
+path_order_warnings = []
+for index, component in enumerate(components):
+    if component["type"] not in restrictor_types:
+        continue
+    raw_name = component.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    label = name or f"{component['type']} at row {index + 1}"
+    if index == 0 or components[index - 1]["type"] not in tube_types:
+        path_order_warnings.append(f"{label} must follow a Straight tube or Bend tube.")
+    elif index < len(components) - 1 and components[index + 1]["type"] not in tube_types:
+        path_order_warnings.append(
+            f"{label} must be followed by a Straight tube or Bend tube. "
+            "A restrictor without a following tube is only allowed as the final outlet."
+        )
+if path_order_warnings:
+    st.warning(" ".join(path_order_warnings))
+
 pressure_drop_pa = (p_inlet_bar - p_outlet_bar) * 100_000
 calculate_clicked = st.button("Calculate flow", type="primary")
 if calculate_clicked and pressure_drop_pa <= 0:
     st.warning("Outlet pressure must be lower than inlet pressure.")
 elif calculate_clicked and validation_errors:
     st.error(" ".join(validation_errors))
+elif calculate_clicked and path_order_warnings:
+    st.error("Correct the path-order warning before calculating.")
 elif calculate_clicked:
     try:
         result = detailed_flow.solve_detailed_flow(

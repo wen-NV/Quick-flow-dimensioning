@@ -23,6 +23,23 @@ def solve_detailed_flow(
     if not path_components:
         raise ValueError("Add at least one path component.")
 
+    restrictor_types = {
+        "Barb", "LBarb", "Orifice", "Compression fitting", "Valve Cv", "Valve Kv"
+    }
+    tube_types = {"Straight tube", "Bend tube"}
+    for index, component in enumerate(path_components):
+        if component["type"] not in restrictor_types:
+            continue
+        if index == 0 or path_components[index - 1]["type"] not in tube_types:
+            raise ValueError(
+                f"{component['type']} at row {index + 1} must follow a straight or bend tube."
+            )
+        if index < len(path_components) - 1 and path_components[index + 1]["type"] not in tube_types:
+            raise ValueError(
+                f"{component['type']} at row {index + 1} must be followed by a straight or bend tube. "
+                "A restrictor is allowed without a following tube only as the final outlet."
+            )
+
     chemical = Chemical(fluid, T=temperature_k, P=(pressure_inlet_pa + pressure_outlet_pa) / 2) if isinstance(fluid, str) else fluid
     rho, mu = chemical.rho, chemical.mu
     if not rho or not mu:
@@ -90,7 +107,7 @@ def solve_detailed_flow(
                 ) * rho * velocity**2 / 2
                 previous_tube_id = diameter
 
-            elif kind in {"Barb", "Orifice", "LBarb"}:
+            elif kind in {"Barb", "Orifice", "LBarb", "Compression fitting"}:
                 if previous_tube_id is None:
                     raise ValueError(f"Add a straight or bend tube before the {kind.lower()} row.")
                 next_tube_id = next_tube_ids[index - 1]
