@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-from thermo import Mixture
+from thermo import Chemical, Mixture
 
 import detailed_flow
 
@@ -53,7 +53,7 @@ with st.expander("How to use this app", expanded=False):
 6. Use the **+** button to add a new row at the bottom, or click the whole role and click "trash bin" at the top right of the table to delete a row.
 7. Click **Calculate flow** to see total flow, fluid properties, and pressure loss by component.
 
-**Path rule:** Barb, LBarb, Orifice, Compression fitting, and valves normally sit between tube rows. They can be the final row when they discharge directly to the outlet.
+    **Path rule:** Fittings and valves may connect directly in series. For a fitting-to-fitting interface, the calculation uses the previous component's outlet ID and the next component's inlet ID. A final fitting may discharge directly to the outlet.
 
 All path-table dimensions are in **mm**. This model is for liquids and gas in low pressure differences, not compressible gas flow for now.
         """
@@ -62,16 +62,16 @@ All path-table dimensions are in **mm**. This model is for liquids and gas in lo
 st.header("1. Fluid and pressure")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    p_inlet_bar = st.number_input("Inlet pressure (bar)", min_value=0.0, value=1.8, step=0.1)
+    p_inlet_bar = st.number_input("Inlet absolute pressure (bar(a))", min_value=0.001, value=1.8, step=0.1)
 with c2:
-    p_outlet_bar = st.number_input("Outlet pressure (bar)", min_value=0.0, value=1.0, step=0.1)
+    p_outlet_bar = st.number_input("Outlet absolute pressure (bar(a))", min_value=0.001, value=1.0, step=0.1)
 with c3:
-    fluid_mode = st.selectbox("Fluid type", ["Pure liquid", "Two-liquid mixture"])
+    fluid_mode = st.selectbox("Fluid type", ["Pure fluid", "Two-component mixture"])
 with c4:
     temperature_c = st.number_input("Temperature (°C)", value=25.0, step=1.0)
 
-fluid_options = ["water", "acetone", "ethanol", "methanol", "toluene", "MTBE", "Nitrogen", "Hydrogen"]
-if fluid_mode == "Pure liquid":
+fluid_options = ["water", "acetone", "ethanol", "methanol", "toluene", "MTBE", "air", "nitrogen", "hydrogen"]
+if fluid_mode == "Pure fluid":
     fluid = st.selectbox("Fluid (thermo)", fluid_options)
 else:
     c1, c2, c3 = st.columns(3)
@@ -92,6 +92,33 @@ else:
     )
 st.caption("Density and viscosity come from thermo at the selected temperature and mean pressure of inlet and outlet.")
 
+gas_fluids = {"air", "nitrogen", "hydrogen"}
+if fluid_mode == "Pure fluid" and fluid.lower() in gas_fluids:
+    gas = Chemical(
+        fluid,
+        T=temperature_c + 273.15,
+        P=((p_inlet_bar + p_outlet_bar) / 2) * 100_000,
+    )
+    gamma = gas.isentropic_exponent or 1.4
+    critical_ratio = (2 / (gamma + 1)) ** (gamma / (gamma - 1))
+    pressure_ratio = p_outlet_bar / p_inlet_bar
+    critical_pressure_bar = p_inlet_bar * critical_ratio
+    st.info(
+        f"Gas screen — γ = {gamma:.3f}; Pout/Pin = {pressure_ratio:.3f}; "
+        f"ideal-gas critical ratio = {critical_ratio:.3f}; "
+        f"critical outlet pressure = {critical_pressure_bar:.3f} bar(a)."
+    )
+    if pressure_ratio <= critical_ratio:
+        st.warning(
+            "Possible choked flow: the overall outlet pressure is at or below the ideal-gas critical pressure. "
+            "A compressible gas model is required; the current liquid-model flow result is not valid."
+        )
+    else:
+        st.warning(
+            "Gas selected: the global pressure ratio is above the ideal-gas choking threshold, but a local "
+            "restriction may still choke. Use a compressible gas model for a design-quality result."
+        )
+
 st.header("2. Ordered flow path")
 component_types = [
     "Straight tube", "Bend tube", "Barb", "LBarb", "Orifice",
@@ -108,6 +135,11 @@ if "path_table" not in st.session_state:
 elif "Move" not in st.session_state.path_table.columns:
     st.session_state.path_table = st.session_state.path_table.copy()
     st.session_state.path_table["Move"] = ""
+if "Order" not in st.session_state.path_table.columns:
+    st.session_state.path_table = st.session_state.path_table.copy()
+    st.session_state.path_table.insert(0, "Order", range(1, len(st.session_state.path_table) + 1))
+else:
+    st.session_state.path_table["Order"] = range(1, len(st.session_state.path_table) + 1)
 if "path_editor_revision" not in st.session_state:
     st.session_state.path_editor_revision = 0
 
@@ -118,8 +150,8 @@ type_fields = {
     "Orifice": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
     "LBarb": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
     "Compression fitting": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Restrictor length (mm)"},
-    "Valve Cv": {"Valve Cv/Kv"},
-    "Valve Kv": {"Valve Cv/Kv"},
+    "Valve Cv": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Valve Cv/Kv"},
+    "Valve Kv": {"Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)", "Valve Cv/Kv"},
 }
 input_columns = set().union(*type_fields.values())
 
@@ -132,8 +164,15 @@ def normalize_path(table):
         for column in input_columns:
             if column not in type_fields[kind]:
                 normalized.at[index, column] = "—"
-            elif str(normalized.at[index, column]).strip() in {"—", "-", "None", "nan"}:
-                normalized.at[index, column] = ""
+            else:
+                value = str(normalized.at[index, column]).strip()
+                is_valve_bore = kind in {"Valve Cv", "Valve Kv"} and column in {
+                    "Restrictor inlet ID (mm)", "Restrictor outlet ID (mm)"
+                }
+                if is_valve_bore and value in {"", "—", "-", "None", "nan", "optional"}:
+                    normalized.at[index, column] = "optional"
+                elif value in {"—", "-", "None", "nan", "optional"}:
+                    normalized.at[index, column] = ""
     return normalized
 
 def sync_path_table(editor_key):
@@ -158,6 +197,10 @@ def sync_path_table(editor_key):
     if "Move" not in updated.columns:
         updated["Move"] = ""
     updated["Move"] = ""
+    if "Order" not in updated.columns:
+        updated.insert(0, "Order", range(1, len(updated) + 1))
+    else:
+        updated["Order"] = range(1, len(updated) + 1)
     st.session_state.path_table = normalize_path(updated).reset_index(drop=True)
     st.session_state.path_editor_revision += 1
 
@@ -169,7 +212,9 @@ path = st.data_editor(
     key=editor_key,
     on_change=sync_path_table,
     args=(editor_key,),
+    disabled=["Order"],
     column_config={
+        "Order": st.column_config.NumberColumn("Order", format="%d", width="small"),
         "Name": st.column_config.TextColumn(),
         "Type": st.column_config.SelectboxColumn(options=component_types, required=True),
         "Tube ID (mm)": st.column_config.TextColumn(),
@@ -198,6 +243,21 @@ def required_number(row, column):
         validation_errors.append(f"{row['Name']}: {column} must be a number.")
         return 0.0
 
+def optional_number(row, column):
+    """Return an optional valve-bore value in mm, or None when left optional."""
+    value = str(row[column]).strip()
+    if value.lower() in {"", "-", "—", "optional", "none", "nan"}:
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        validation_errors.append(f"{row['Name']}: {column} must be a number or optional.")
+        return None
+    if number <= 0:
+        validation_errors.append(f"{row['Name']}: {column} must be greater than zero when provided.")
+        return None
+    return number
+
 components = []
 for _, row in path.iterrows():
     kind = row["Type"]
@@ -213,28 +273,13 @@ for _, row in path.iterrows():
         component["restrictor_length_m"] = required_number(row, "Restrictor length (mm)") / 1000
     else:
         component["valve_coefficient"] = required_number(row, "Valve Cv/Kv")
+        inlet_id = optional_number(row, "Restrictor inlet ID (mm)")
+        outlet_id = optional_number(row, "Restrictor outlet ID (mm)")
+        if inlet_id is not None:
+            component["inlet_id_m"] = inlet_id / 1000
+        if outlet_id is not None:
+            component["outlet_id_m"] = outlet_id / 1000
     components.append(component)
-
-restrictor_types = {
-    "Barb", "LBarb", "Orifice", "Compression fitting", "Valve Cv", "Valve Kv"
-}
-tube_types = {"Straight tube", "Bend tube"}
-path_order_warnings = []
-for index, component in enumerate(components):
-    if component["type"] not in restrictor_types:
-        continue
-    raw_name = component.get("name")
-    name = raw_name.strip() if isinstance(raw_name, str) else ""
-    label = name or f"{component['type']} at row {index + 1}"
-    if index == 0 or components[index - 1]["type"] not in tube_types:
-        path_order_warnings.append(f"{label} must follow a Straight tube or Bend tube.")
-    elif index < len(components) - 1 and components[index + 1]["type"] not in tube_types:
-        path_order_warnings.append(
-            f"{label} must be followed by a Straight tube or Bend tube. "
-            "A restrictor without a following tube is only allowed as the final outlet."
-        )
-if path_order_warnings:
-    st.warning(" ".join(path_order_warnings))
 
 pressure_drop_pa = (p_inlet_bar - p_outlet_bar) * 100_000
 calculate_clicked = st.button("Calculate flow", type="primary")
@@ -242,8 +287,6 @@ if calculate_clicked and pressure_drop_pa <= 0:
     st.warning("Outlet pressure must be lower than inlet pressure.")
 elif calculate_clicked and validation_errors:
     st.error(" ".join(validation_errors))
-elif calculate_clicked and path_order_warnings:
-    st.error("Correct the path-order warning before calculating.")
 elif calculate_clicked:
     try:
         result = detailed_flow.solve_detailed_flow(
@@ -263,9 +306,15 @@ elif calculate_clicked:
         m4.metric("Density", f"{result['density_kg_m3']:.1f} kg/m³")
         m5.metric("Viscosity", f"{result['viscosity_pa_s'] * 1000:.3f} mPa·s")
         breakdown = pd.DataFrame(result["breakdown"])
-        breakdown["ΔP (bar)"] = breakdown["ΔP (Pa)"] / 100_000
+        # Format as display text so all result-table values align consistently.
+        breakdown["ΔP (bar)"] = (breakdown["ΔP (Pa)"] / 100_000).map(lambda value: f"{value:.4f}")
+        breakdown["Reynolds number"] = breakdown["Re"].map(lambda value: f"{value:,.0f}")
         st.subheader("Pressure-loss breakdown")
-        st.dataframe(breakdown[["Component", "Type", "ΔP (bar)", "Re"]], width="stretch", hide_index=True)
+        st.dataframe(
+            breakdown[["Component", "Type", "ΔP (bar)", "Reynolds number"]],
+            width="stretch",
+            hide_index=True,
+        )
         fig, ax = plt.subplots(figsize=(9, 3.5))
         ax.bar(breakdown["Component"], breakdown["ΔP (bar)"], color="#2b5c8f")
         ax.set_ylabel("Pressure loss (bar)")

@@ -23,23 +23,6 @@ def solve_detailed_flow(
     if not path_components:
         raise ValueError("Add at least one path component.")
 
-    restrictor_types = {
-        "Barb", "LBarb", "Orifice", "Compression fitting", "Valve Cv", "Valve Kv"
-    }
-    tube_types = {"Straight tube", "Bend tube"}
-    for index, component in enumerate(path_components):
-        if component["type"] not in restrictor_types:
-            continue
-        if index == 0 or path_components[index - 1]["type"] not in tube_types:
-            raise ValueError(
-                f"{component['type']} at row {index + 1} must follow a straight or bend tube."
-            )
-        if index < len(path_components) - 1 and path_components[index + 1]["type"] not in tube_types:
-            raise ValueError(
-                f"{component['type']} at row {index + 1} must be followed by a straight or bend tube. "
-                "A restrictor is allowed without a following tube only as the final outlet."
-            )
-
     chemical = Chemical(fluid, T=temperature_k, P=(pressure_inlet_pa + pressure_outlet_pa) / 2) if isinstance(fluid, str) else fluid
     rho, mu = chemical.rho, chemical.mu
     if not rho or not mu:
@@ -63,16 +46,44 @@ def solve_detailed_flow(
                     break
         return zeta_90 * angle_deg / 90
 
+    restriction_types = {"Barb", "LBarb", "Orifice", "Compression fitting"}
+    tube_types = {"Straight tube", "Bend tube"}
+
+    def upstream_connection_id(index: int) -> float | None:
+        """Find the nearest known bore immediately upstream of a component."""
+        for component in reversed(path_components[:index]):
+            kind = component["type"]
+            if kind in tube_types:
+                return float(component["id_m"])
+            if kind in restriction_types:
+                return float(component["outlet_id_m"])
+            if kind in {"Valve Cv", "Valve Kv"} and component.get("outlet_id_m") is not None:
+                return float(component["outlet_id_m"])
+            # Cv/Kv describes valve loss; its optional outlet bore may be unknown.
+        return None
+
+    def downstream_connection_id(index: int) -> float | None:
+        """Find the nearest known bore immediately downstream of a component."""
+        for component in path_components[index + 1:]:
+            kind = component["type"]
+            if kind in tube_types:
+                return float(component["id_m"])
+            if kind in restriction_types:
+                return float(component["inlet_id_m"])
+            if kind in {"Valve Cv", "Valve Kv"} and component.get("inlet_id_m") is not None:
+                return float(component["inlet_id_m"])
+            # Cv/Kv describes valve loss; its optional inlet bore may be unknown.
+        return None
+
+    def transition_zeta(from_id: float, to_id: float, reynolds: float) -> float:
+        """Loss coefficient for a contraction or expansion between two bores."""
+        if to_id <= from_id:
+            return functions.get_zeta_in(to_id, from_id, Re=max(reynolds, 1))
+        return functions.OutletDrag_coefficient(from_id, to_id)
+
     def losses(flow: float) -> tuple[float, list[dict[str, float]]]:
         total = 0.0
         rows: list[dict[str, float]] = []
-        previous_tube_id: float | None = None
-        next_tube_ids: list[float | None] = [None] * len(path_components)
-        next_id: float | None = None
-        for index in range(len(path_components) - 1, -1, -1):
-            next_tube_ids[index] = next_id
-            if path_components[index]["type"] in {"Straight tube", "Bend tube"}:
-                next_id = float(path_components[index]["id_m"])
 
         for index, component in enumerate(path_components, 1):
             kind = component["type"]
@@ -87,9 +98,8 @@ def solve_detailed_flow(
                 length = float(component["length_m"])
                 if diameter <= 0 or length < 0:
                     raise ValueError("Straight tube ID must be positive and length cannot be negative.")
-                
+                reynolds = functions.reynolds_number(flow, diameter, rho, mu)
                 loss = functions.tube_loss (flow,rho, mu,  diameter, length)
-                previous_tube_id = diameter
 
             elif kind == "Bend tube":
                 diameter = float(component["id_m"])
@@ -105,44 +115,43 @@ def solve_detailed_flow(
                 loss = count * (
                     friction * arc_length / diameter + bend_zeta(reynolds, ratio, angle) # need to be check for how many bends, the ratio will change, according to VDI Heat Atlas
                 ) * rho * velocity**2 / 2
-                previous_tube_id = diameter
 
             elif kind in {"Barb", "Orifice", "LBarb", "Compression fitting"}:
-                if previous_tube_id is None:
-                    raise ValueError(f"Add a straight or bend tube before the {kind.lower()} row.")
-                next_tube_id = next_tube_ids[index - 1]
                 inlet_id = float(component["inlet_id_m"])
                 outlet_id = float(component["outlet_id_m"])
                 length = float(component.get("restrictor_length_m", 0))
                 if inlet_id <= 0 or outlet_id <= 0 or length < 0:
                     raise ValueError(f"{kind} inlet ID, outlet ID, and length must be valid.")
-                if inlet_id > previous_tube_id:
-                    raise ValueError(f"{kind} inlet ID must fit its preceding tube.")
-                if next_tube_id is not None:
-                    if outlet_id > next_tube_id:
-                        raise ValueError(f"{kind} outlet ID must fit its following tube.")
-                    if kind == "LBarb":
-                        loss = functions.Lbarb_dp(flow, mu, rho, inlet_id, outlet_id, previous_tube_id, next_tube_id, length)
-                    else:
-                        loss = functions.barb_dp(flow, mu, rho, inlet_id, outlet_id, previous_tube_id, next_tube_id, length)
-                else:
-                    # Final outlet: discharge directly after the restrictor.
-                    # The outlet-loss coefficient of 1 represents exit into a
-                    # large surrounding volume, so no downstream tube is needed.
-                    mean_id = (inlet_id + outlet_id) / 2
-                    velocity = flow / (math.pi * mean_id**2 / 4)
-                    reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
-                    zeta = functions.get_zeta_in(inlet_id, previous_tube_id, Re=max(reynolds, 1))
-                    zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
+                mean_id = (inlet_id + outlet_id) / 2
+                reynolds = functions.reynolds_number(flow, mean_id, rho, mu)
+                upstream_id = upstream_connection_id(index - 1) or inlet_id
+                downstream_id = downstream_connection_id(index - 1)
+                velocity = flow / (math.pi * mean_id**2 / 4)
+                zeta = transition_zeta(upstream_id, inlet_id, reynolds)
+                zeta += functions.friction_factor(max(reynolds, 1e-12)) * length / mean_id
+                if downstream_id is not None:
+                    zeta += transition_zeta(outlet_id, downstream_id, reynolds)
+                elif index == len(path_components):
+                    # Final restrictor discharges into a large outlet volume.
                     zeta += 1.0
-                    if kind == "LBarb":
-                        zeta += 1.15
-                    loss = zeta * rho * velocity**2 / 2
+                if kind == "LBarb":
+                    zeta += 1.15
+                loss = zeta * rho * velocity**2 / 2
 
             elif kind in {"Valve Cv", "Valve Kv"}:
                 coefficient = float(component["valve_coefficient"])
                 if coefficient <= 0:
                     raise ValueError("Valve Cv/Kv must be greater than zero.")
+                
+
+                reference_id = (component.get("inlet_id_m")
+                                or component.get("outlet_id_m")
+                                or upstream_connection_id(index - 1)
+                                or downstream_connection_id(index - 1)
+                            )
+
+                if reference_id is not None:
+                    reynolds = functions.reynolds_number(flow, reference_id, rho, mu)
                 specific_gravity = rho / 997.0
                 if kind == "Valve Cv":
                     loss = count * specific_gravity * (flow * 15_850.323 / coefficient) ** 2 * 6_894.757
