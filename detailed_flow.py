@@ -18,6 +18,8 @@ def solve_detailed_flow(
     is checked against both the preceding and following tube IDs.
     """
     pressure_drop_pa = pressure_inlet_pa - pressure_outlet_pa
+    if not all(math.isfinite(value) for value in (pressure_inlet_pa, pressure_outlet_pa, pressure_drop_pa)):
+        raise ValueError("Inlet and outlet pressures must be finite.")
     if pressure_drop_pa <= 0:
         raise ValueError("Inlet pressure must be greater than outlet pressure.")
     if not path_components:
@@ -25,7 +27,7 @@ def solve_detailed_flow(
 
     chemical = Chemical(fluid, T=temperature_k, P=(pressure_inlet_pa + pressure_outlet_pa) / 2) if isinstance(fluid, str) else fluid
     rho, mu = chemical.rho, chemical.mu
-    if not rho or not mu:
+    if not rho or not mu or not math.isfinite(rho) or not math.isfinite(mu) or rho <= 0 or mu <= 0:
         raise ValueError(f"Thermo could not determine density or viscosity for {fluid!r}.")
 
     def bend_zeta(reynolds: float, radius_ratio: float, angle_deg: float) -> float:
@@ -160,13 +162,27 @@ def solve_detailed_flow(
             else:
                 raise ValueError(f"Unknown component type: {kind}")
 
+            if not math.isfinite(loss) or loss < 0:
+                raise ValueError(f"{name}: calculated pressure loss must be finite and non-negative.")
             total += loss
             rows.append({"Component": name, "Type": kind, "ΔP (Pa)": loss, "Re": reynolds})
+        if not math.isfinite(total):
+            raise ValueError("Total pressure loss must be finite.")
         return total, rows
 
+    # At zero flow, losses are zero. Do not evaluate the hydraulic helpers at
+    # zero: their laminar friction factors contain 64 / Re.
     lower, upper = 0.0, 0.01
-    while losses(upper)[0] < pressure_drop_pa and upper < 10:
-        upper *= 2
+    max_flow_m3_s = 10.0
+    upper_loss = losses(upper)[0]
+    while upper_loss < pressure_drop_pa and upper < max_flow_m3_s:
+        upper = min(upper * 2, max_flow_m3_s)
+        upper_loss = losses(upper)[0]
+    if upper_loss < pressure_drop_pa:
+        raise ValueError(
+            "Unable to bracket a flow solution within the search limit "
+            f"({max_flow_m3_s:g} m³/s). Check path resistance and pressure inputs."
+        )
     for _ in range(80):
         midpoint = (lower + upper) / 2
         if losses(midpoint)[0] < pressure_drop_pa:
@@ -175,6 +191,19 @@ def solve_detailed_flow(
             upper = midpoint
     flow = (lower + upper) / 2
     total, breakdown = losses(flow)
+    # A narrow flow interval alone does not guarantee pressure balance, e.g.
+    # when a friction correlation has a discontinuity at a regime boundary.
+    residual_pa = pressure_drop_pa - total
+    tolerance_pa = max(1e-6, pressure_drop_pa * 1e-6)
+    if abs(residual_pa) > tolerance_pa:
+        raise ValueError(
+            "Unable to converge to pressure balance: "
+            f"available ΔP = {pressure_drop_pa:.6g} Pa, "
+            f"calculated loss = {total:.6g} Pa, "
+            f"residual = {residual_pa:.6g} Pa "
+            f"(tolerance {tolerance_pa:.6g} Pa). "
+            "Check component inputs and flow-regime correlations."
+        )
     return {
         "flow_m3_s": flow, "flow_l_min": flow * 60_000, "total_loss_pa": total,
         "density_kg_m3": rho, "viscosity_pa_s": mu, "breakdown": breakdown,
